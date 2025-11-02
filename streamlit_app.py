@@ -1,62 +1,52 @@
 import streamlit as st
-from openai import OpenAI, RateLimitError
+import google.generativeai as genai
+from google.api_core.exceptions import ResourceExhausted
 
-# Show title and description.
-st.title("💬 Chatbot")
+# タイトルと説明
+st.title("💬 Chatbot (Gemini API)")
 st.write(
-    "This is a simple chatbot that uses OpenAI's GPT-3.5 model to generate responses. "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
-    "You can also learn how to build this app step by step by [following our tutorial](https://docs.streamlit.io/develop/tutorials/llms/build-conversational-apps)."
+    "このチャットボットはGoogle Gemini APIを使って応答を生成します。"
+    "利用にはGemini APIキーが必要です。APIキーは [Google AI Studio](https://aistudio.google.com/app/apikey) で取得できます。"
 )
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
-if not openai_api_key:
-    st.info("Please add your OpenAI API key to continue.", icon="🗝️")
+# ユーザーのGemini APIキー入力
+gemini_api_key = st.text_input("Gemini API Key", type="password")
+if not gemini_api_key:
+    st.info("Gemini APIキーを入力してください。", icon="🗝️")
 else:
+    # Geminiクライアント設定
+    genai.configure(api_key=gemini_api_key)
+    model = genai.GenerativeModel('gemini-pro')
 
-    # Create an OpenAI client.
-    client = OpenAI(api_key=openai_api_key)
-
-    # Create a session state variable to store the chat messages. This ensures that the
-    # messages persist across reruns.
+    # セッション状態でメッセージ保存
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # Display the existing chat messages via `st.chat_message`.
+    # 既存のチャット履歴表示
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # Create a chat input field to allow the user to enter a message. This will display
-    # automatically at the bottom of the page.
-    if prompt := st.chat_input("What is up?"):
-
-        # Store and display the current prompt.
+    # 入力フォーム
+    if prompt := st.chat_input("What's up?"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Generate a response using the OpenAI API.
         try:
-            stream = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": m["role"], "content": m["content"]}
-                    for m in st.session_state.messages
-                ],
-                stream=True,
-            )
+            # Gemini APIへリクエスト
+            history = [
+                {"role": m["role"], "parts": [m["content"]]}
+                for m in st.session_state.messages
+            ]
+            response = model.generate_content(history)
+            content = response.text
 
-            # Stream the response to the chat using `st.write_stream`, then store it in 
-            # session state.
             with st.chat_message("assistant"):
-                response = st.write_stream(stream)
-            st.session_state.messages.append({"role": "assistant", "content": response})
+                st.markdown(content)
+            st.session_state.messages.append({"role": "assistant", "content": content})
 
-        except RateLimitError:
-            st.error("OpenAI APIの利用制限に達しました。時間をおいて再度お試しください。")
+        except ResourceExhausted:
+            st.error("Gemini APIのレートリミットに達しました。時間を空けて再度お試しください。")
         except Exception as e:
             st.error(f"エラーが発生しました: {e}")
