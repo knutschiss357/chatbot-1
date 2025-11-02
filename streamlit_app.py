@@ -22,7 +22,7 @@ else:
         st.info("Gemini APIキーを入力してください。", icon="🗝️")
     else:
         genai.configure(api_key=gemini_api_key)
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-1.0-pro-latest')
 
         if "messages" not in st.session_state:
             st.session_state.messages = []
