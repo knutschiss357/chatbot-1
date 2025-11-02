@@ -1,66 +1,100 @@
 import streamlit as st
+import requests
 
-# Gemini APIライブラリのインポートをトライ
-try:
-    import google.generativeai as genai
-    from google.api_core.exceptions import ResourceExhausted
-    gemini_available = True
-except ImportError:
-    gemini_available = False
+# タイトルと説明の表示
+st.title("💬 Gemini チャットボット")
+st.write("このシンプルなチャットボットは、Google の Gemini API を利用して応答を生成します。 ")
 
-st.title("💬 Chatbot (Gemini API)")
+# Streamlit Community CloudのSecretsからAPIキーを取得
+# .streamlit/secrets.toml に GEMINI_API_KEY = "YOUR_API_KEY" を設定してください
+gemini_api_key = st.secrets.get("GEMINI_API_KEY")
 
-if not gemini_available:
-    st.error(
-        "Gemini API用ライブラリ（google-generativeai）がインストールされていません。\n"
-        "下記コマンドでインストールしてください。\n\n"
-        "`pip install google-generativeai`"
-    )
+if not gemini_api_key:
+    st.info("Streamlit Community CloudのSecretsに `GEMINI_API_KEY` を設定してください。", icon="🗝️")
 else:
-    gemini_api_key = st.text_input("Gemini API Key", type="password")
-    if not gemini_api_key:
-        st.info("Gemini APIキーを入力してください。", icon="🗝️")
-    else:
-        # Gemini APIキーを設定
-        genai.configure(api_key=gemini_api_key)
+    # ユーザーがモデルを選択できるようにする（正しいモデル名表記を使用）
+    model_name = st.selectbox(
+        "使用する Gemini モデルを選択",
+        (
+            "gemini-2.5-flash", 
+            "gemini-2.5-pro"
+        )
+    )
+    st.write(f"現在のモデル: **{model_name}**") # 選択中のモデルを表示
 
-        # 利用可能なモデル一覧を取得して、最初のものを使う（推奨）
-        available_models = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
-        if available_models:
-            selected_model = available_models[0]
-        else:
-            selected_model = "gemini-pro" # フォールバック
+    if "messages" not in st.session_state:
+        # 初期のメッセージリストをセッションステートに作成
+        st.session_state.messages = []
 
-        model = genai.GenerativeModel(selected_model)
+    # 既存のチャットメッセージを表示
+    for message in st.session_state.messages:
+        # roleに応じて日本語で表示
+        display_role = "ユーザー" if message["role"] == "user" else "アシスタント"
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
+    # ユーザーがメッセージを入力するためのチャット入力フィールド
+    if prompt := st.chat_input("ここにメッセージを入力"):
 
-        # 既存のチャット履歴表示
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+        # ユーザーのプロンプトを保存・表示
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-        # 入力フォーム
-        if prompt := st.chat_input("What's up?"):
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
+        # Gemini API用にメッセージ形式を準備（ロールを "user" または "model" に変換）
+        gemini_messages = []
+        for m in st.session_state.messages:
+            # StreamlitのロールをAPIのロールにマッピング
+            api_role = "user" if m["role"] == "user" else "model"
+            gemini_messages.append(
+                {
+                    "role": api_role,
+                    "parts": [{"text": m["content"]}]
+                }
+            )
 
-            try:
-                # Gemini APIへリクエスト
-                history = [
-                    {"role": m["role"], "parts": [m["content"]]}
-                    for m in st.session_state.messages
-                ]
-                response = model.generate_content(history)
-                content = response.text
+        # Gemini API endpoint
+        api_url = f"https://generativelanguage.googleapis.com/v1/models/{model_name}:generateContent?key={gemini_api_key}"
 
-                with st.chat_message("assistant"):
-                    st.markdown(content)
-                st.session_state.messages.append({"role": "assistant", "content": content})
+        headers = {"Content-Type": "application/json"}
+        data = {
+            "contents": gemini_messages,
+            "generationConfig": {
+                "temperature": 0.7,
+                "topP": 0.8
+            }
+        }
 
-            except ResourceExhausted:
-                st.error("Gemini APIのレートリミットに達しました。時間を空けて再度お試しください。")
-            except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
+        try:
+            # アシスタントの応答をチャットメッセージコンテナ内に表示
+            with st.chat_message("assistant"):
+                with st.spinner(f"{model_name} が応答を生成中..."):
+                    response = requests.post(api_url, headers=headers, json=data, timeout=30)
+                    response.raise_for_status() # HTTPエラーがあれば例外を発生
+                    
+                    result = response.json()
+                    
+                    # APIからのレスポンス構造のチェックと応答の取得
+                    if "candidates" in result and result["candidates"] and \
+                       "content" in result["candidates"][0] and \
+                       "parts" in result["candidates"][0]["content"] and \
+                       result["candidates"][0]["content"]["parts"]:
+                        
+                        gemini_reply = result["candidates"][0]["content"]["parts"][0]["text"]
+                    else:
+                        # 予期しないレスポンス形式の場合
+                        gemini_reply = f"エラー: 予期しないAPI応答形式です。{result}"
+
+                    st.markdown(gemini_reply)
+            
+            # アシスタントの応答をセッションステートに保存
+            st.session_state.messages.append({"role": "assistant", "content": gemini_reply})
+
+        except requests.exceptions.RequestException as e:
+            error_message = f"APIリクエストエラーが発生しました: {e}"
+            st.error(error_message)
+            st.session_state.messages.append({"role": "assistant", "content": error_message})
+        except Exception as e:
+            error_message = f"予期せぬエラーが発生しました: {e}"
+            st.error(error_message)
+            st.session_state.messages.append({"role": "assistant", "content": error_message})
