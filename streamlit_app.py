@@ -1,6 +1,6 @@
 import streamlit as st
 
-# Geminiライブラリのインポートをトライ
+# Gemini APIライブラリのインポートをトライ
 try:
     import google.generativeai as genai
     from google.api_core.exceptions import ResourceExhausted
@@ -21,22 +21,34 @@ else:
     if not gemini_api_key:
         st.info("Gemini APIキーを入力してください。", icon="🗝️")
     else:
+        # Gemini APIキーを設定
         genai.configure(api_key=gemini_api_key)
-        model = genai.GenerativeModel('gemini-1.0-pro-latest')
+
+        # 利用可能なモデル一覧を取得して、最初のものを使う（推奨）
+        available_models = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
+        if available_models:
+            selected_model = available_models[0]
+        else:
+            selected_model = "gemini-pro" # フォールバック
+
+        model = genai.GenerativeModel(selected_model)
 
         if "messages" not in st.session_state:
             st.session_state.messages = []
 
+        # 既存のチャット履歴表示
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
+        # 入力フォーム
         if prompt := st.chat_input("What's up?"):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(prompt)
 
             try:
+                # Gemini APIへリクエスト
                 history = [
                     {"role": m["role"], "parts": [m["content"]]}
                     for m in st.session_state.messages
